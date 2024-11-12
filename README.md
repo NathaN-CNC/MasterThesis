@@ -1,10 +1,10 @@
-Distributed Network Intrusion Detection System
+# Distributed Network Intrusion Detection System
 
-Disclaimer
+## Disclaimer
 
 This work was carried out during a master's dissertation, to develop a simulation of a distributed intrusion detection system using machine learning technologies and multi-agent systems.
 
-Setup
+## Setup
 
 This application was developed using JADE, Pycaret and Flask.
 
