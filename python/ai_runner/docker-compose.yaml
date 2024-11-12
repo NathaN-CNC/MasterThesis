@@ -1,0 +1,60 @@
+services:
+  random-forest:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=randomforest
+      - PORT=5000
+
+  mlp:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=MLP
+      - PORT=5001
+
+  logistic-regression:
+    build: .
+    ports:
+      - "5002:5002"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=LogisticReg
+      - PORT=5002
+
+  knn:
+    build: .
+    ports:
+      - "5003:5003"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=KNN
+      - PORT=5003
+
+  decision-tree:
+    build: .
+    ports:
+      - "5004:5004"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=DecisionTree
+      - PORT=5004
+
+  svm:
+    build: .
+    ports:
+      - "5005:5005"
+    volumes:
+      - "./models:/app/models"
+    environment:
+      - MODEL_NAME=SVM
+      - PORT=5005

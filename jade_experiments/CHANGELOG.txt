@@ -1,0 +1,20 @@
+# 0903/2024:
+
+* Deletei códigos antigos e inúteis.
+* Atualizei a função `askForOpinion` para contar e monitorar as responstas dos agentes.
+* Implementei a função `analyzeData` para processar um dado e verificar se ele é um ataque.
+  - Caso tenha uma confiança mais alta que 0.8 ou menor do que 0.2, o agente analyza o resultado.
+  - Caso contrário, eu pergunto para os outros agentes.
+* Renomeei a classe `OpinionRequest` para `OpinionMessage`.
+  - Quando a mensagem é um pedido (request), ele processa e retorna sua predição.
+  - Quando a mensagem é uma resposta (response), ele conta e atualiza o melhor palpite.
+    - Ao receber todas as respostas ele verifica o resultado.
+* A função de analizar o resultado apenas imprime o resultado no console.
+
+# 06/03/2024:
+
+* Criei um projeto python `ai_runner` que cria uma API para responder a predição de um modelo de AI.
+* Criei um Agente `AgentAI` capaz de se conectar a API para tomar um ação.
+  - Ele se registra como um serviço em relação ao modelo que ele quer usar.
+  - Ele espera uma mensagem de `ReadyRequest` para começar a processar os dados. (Em desenvolvimento)
+  - Ele espera uma mensagem de `OpinionRequest` para ajudar outro agente a tomar uma decisão.

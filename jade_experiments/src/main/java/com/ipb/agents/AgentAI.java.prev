@@ -1,0 +1,356 @@
+package com.ipb.agents;
+
+import java.io.IOException;
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.List;
+import java.util.UUID;
+
+import com.ipb.message.OpinionRequestMessage;
+import com.ipb.message.OpinionResponseMessage;
+import com.ipb.message.ReadyMessage;
+import com.ipb.utils.AgentExtension;
+import com.ipb.utils.ApiModel;
+import com.ipb.utils.Constants;
+import com.ipb.utils.LoadCsvFromDisk;
+
+import jade.core.AID;
+import jade.core.Agent;
+import jade.core.behaviours.CyclicBehaviour;
+import jade.core.behaviours.OneShotBehaviour;
+import jade.core.behaviours.TickerBehaviour;
+import jade.domain.DFService;
+import jade.domain.FIPAException;
+import jade.domain.FIPAAgentManagement.DFAgentDescription;
+import jade.domain.FIPAAgentManagement.ServiceDescription;
+import jade.lang.acl.ACLMessage;
+import jade.lang.acl.MessageTemplate;
+import jade.lang.acl.UnreadableException;
+
+
+public class AgentAI extends Agent {
+    // Constants
+    public final float CONFIDENCE_THREASHOLD_UP = 0.8f;
+    public final float CONFIDENCE_THREASHOLD_DOWN = 0.2f;
+    public final long OPINION_TIMEOUT = 3_000; // milliseconds
+    private static String USAGE = "Usage <agent-name>:com.ipb.agents.AgentAI(<agent-skill>)\n  agent-skill: RandomForest | ExtraTrees | XGBoost\n  Example: AgentAI:com.ipb.agents.AgentAI(RandomForest)";
+
+    // Setup
+    private String skill;
+    private ApiModel api;
+
+    // State
+    private HashMap<UUID, OpinionResult> bestOpinions = new HashMap<UUID, OpinionResult>();
+    private int countAnalyzeData = 0;
+    private int countAnalyzeResult = 0;
+    private int countAskForOpinion = 0;
+    private int countAnswerOpinionRequests = 0;
+    private int countAnalyzeOptionResponses = 0;
+
+    protected void setup() {
+        Object[] args = getArguments();
+        if (args.length != 1) {
+            showSetupError("Invalid number of arguments");
+            this.doDelete();
+            return;
+        }
+
+        String learningModel = args[0].toString();
+        this.skill = learningModel;
+        this.api = AgentExtension.getModel(learningModel);
+
+        /** Verificar se a skill passada é valida */
+
+        if (this.api == null) {
+            showSetupError("Invalid learning model: " + learningModel);
+            this.doDelete();
+            return;
+        }
+
+        if (!AgentExtension.registerSkill(this, learningModel)) {
+            showSetupError("Failed to register skill: " + getLocalName() + ":" + learningModel);
+            this.doDelete();
+            return;
+        }
+
+        System.out.println("Learning model loaded: " + learningModel);
+
+        addBehaviourMessagesListener();
+
+        System.out.println("Agent " + getLocalName() + " is ready");
+    }
+
+    /*
+     * O método itera sobre as habilidades disponíveis definidas na classe
+     * Constants.SKILLS. Para cada habilidade que não corresponda à habilidade do
+     * agente atual (this.skill),
+     * uma solicitação de opinião é enviada para os agentes que oferecem essa
+     * habilidade.
+     * Cria uma descrição de agente (DFAgentDescription) para procurar agentes que
+     * ofereçam o tipo de serviço correspondente à habilidade atual.
+     * Para cada agente encontrado, cria uma mensagem ACL (Agent Communication
+     * Language) do tipo ACLMessage.INFORM, adiciona o agente como receptor da
+     * mensagem,
+     * define o conteúdo da mensagem como uma solicitação de opinião usando um
+     * objeto OpinionMessage, que parece ser uma classe que encapsula a solicitação
+     * de opinião com
+     * o identificador único e os dados de entrada.
+     * Depois de enviar a mensagem, incrementa o contador de solicitações enviadas e
+     * imprime uma mensagem de registro no console para acompanhar a solicitação de
+     * opinião.
+     * Esse método é responsável por iniciar o processo de solicitação de opinião a
+     * outros agentes para um determinado resultado de análise representado por
+     * OpinionResult.
+     * Ele utiliza o mecanismo de busca do DFService para encontrar agentes que
+     * oferecem habilidades específicas e envia solicitações de opinião para eles.
+     */
+
+    private void askForOpinion(UUID id, float[] inputData, OpinionResult result) {
+        this.countAskForOpinion++;
+
+        int count = 0;
+        // TODO: Broadcast to all agents
+        // - Add skill to the message, to avoid asking to the same agent
+        // - Check the total of agents that should answer
+        // - Use the timeout behaviour to check the result
+        for (String skill : Constants.SKILLS) {
+            if (!skill.equals(this.skill)) { // dif da skill atual
+                DFAgentDescription desc = new DFAgentDescription();
+                ServiceDescription service = new ServiceDescription();
+                service.setType(skill); // seta o tipo de serviço / skill
+                desc.addServices(service); // seta a descrição como tipo de serviço
+                try {
+                    // retorna a descrição dos agentes que correspondem aos critérios de busca
+                    DFAgentDescription[] agentDescs = DFService.search(this, desc);
+                    ACLMessage msg = new ACLMessage(ACLMessage.INFORM);
+                    msg.setContentObject(new OpinionRequestMessage(id, inputData));
+                    for (DFAgentDescription agentDesc : agentDescs) {
+                        msg.addReceiver(new AID(agentDesc.getName().getLocalName(), AID.ISLOCALNAME));
+                        count++;
+                        showMessage("Asked for opinion to " + agentDesc.getName().getLocalName());
+                    }
+                    send(msg);
+                } catch (FIPAException e) {
+                    e.printStackTrace();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        // TODO: Remove total, count, and ready properties and use TimeoutBehaviour
+        result.setTotal(count);
+        result.setReady(true);
+    }
+
+    /*
+     * Os dados de entrada são analisados por um modelo de IA e, se a probabilidade
+     * de ataque
+     * estiver dentro de determinados limites, a opinião de outros agentes é
+     * solicitada para ajudar na tomada de decisão.
+     */
+    private void analyzeData(float[] inputData) {
+        this.countAnalyzeData++;
+
+        float[] response = api.predict(inputData);
+        Float isAttack = response[1];
+
+        if (isAttack >= CONFIDENCE_THREASHOLD_UP || isAttack <= CONFIDENCE_THREASHOLD_DOWN) {
+            analyzeResult(inputData, isAttack);
+        } else {
+            UUID id = UUID.randomUUID(); //cria um id
+            // TODO: Resolve conflicts
+            OpinionResult result = new OpinionResult(isAttack); ///Passa o valor entre 20 e 80 para o objetod result // result pode ser opiniao
+            bestOpinions.put(id, result); //cria um dicionario e passa pra ele a chave e o valor
+            askForOpinion(id, inputData, result); //manda pra analise
+            addBehaviourTimeout(id, inputData);
+        }
+    }
+
+    /*
+     * analisar as respostas de opinião recebidas de outros agentes em relação a uma
+     * solicitação específica identificada por id.
+     */
+    private void answerOpinionRequests(UUID id, float[] inputData, AID otherAgent) {
+        this.countAnswerOpinionRequests++;
+
+        float[] response = api.predict(inputData);
+
+        try {
+            ACLMessage msg = new ACLMessage(ACLMessage.INFORM);
+            msg.addReceiver(otherAgent);
+            msg.setContentObject(new OpinionResponseMessage(id, response));
+            send(msg);
+            showMessage("answered opinion request: " + id + " to " + otherAgent.getLocalName());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /*
+     * analisa as respostas de opinião recebidas de outros agentes em relação a uma
+     * solicitação específica identificada por um id.
+     */
+    private void analyzeOptionResponses(UUID id, float[] outputData) {
+        this.countAnalyzeOptionResponses++;
+
+        synchronized (bestOpinions) {
+            OpinionResult result = bestOpinions.get(id);
+            if (result == null) {
+                // Timeout
+                showMessage("received opinion response without a request: " + id);
+                return;
+            }
+
+            float isAttack = outputData[1];
+            boolean probablyAttack = result.getBest() > 0.5; // refazer - acima de 20% é probabilidade de ataque (rever esse 0.5)
+            if (probablyAttack) {
+                if (result.getBest() < isAttack) {
+                    result.setBest(isAttack);
+                }
+            } else {
+                if (result.getBest() > isAttack) {
+                    result.setBest(isAttack);
+                } //else {
+                    /**
+                     * Caso eu tenho um resultado de 0.49 (sem probabilidade de ataque)
+                     * Logo devo verificar se a resposta o outro agente é maior que a minha melhor resposta
+                     * Caso o outro agente tenha uma resposta melhor, eu substituo a minha resposta com a resposta dele
+                     * 
+                     */
+                   // result.setBest(isAttack);
+                //}
+            }
+
+            result.incrementCount();
+
+            if (result.isComplete()) {
+                showMessage("Opinion complete: " + id);
+                bestOpinions.remove(id);
+                analyzeResult(outputData, result.getBest());
+            }
+        }
+    }
+
+    /*
+     * analisar o resultado da predição da IA sobre os dados de entrada e imprimir
+     * uma mensagem no console indicando se o ataque foi detectado ou não.
+     */
+    private void analyzeResult(float[] inputData, float isAttack) {
+        this.countAnalyzeResult++;
+        showMessage("is attack? " + isAttack);
+    }
+
+    /*
+     * Como estamos lidando com segurança devemos 'limitar' o agente a escutar apenas alguns tipos de mensagens, 
+     * Para selecionar as mensagens que um agente deseja receber podemos utilizar a classe jade.lang.acl.MessageTemplate. 
+     * Esta classe permite definir filtros para cada atributo da mensagem ACLMessage e estes filtros podem ser utilizados
+     * como parâmetros do método receive().Nesta classe se define um conjunto de métodos estáticos que retornam como resultado
+     * um objeto do tipo MessageTemplate.O nosso agente Robo poderia estar interessado em receber apenas mensagens do tipo inform
+     * e cuja linguagem seja o Português.
+     */
+    private void addBehaviourMessagesListener() {
+        addBehaviour(new CyclicBehaviour(this) {
+            @Override
+            public void action() {
+                MessageTemplate MT1 = MessageTemplate.MatchPerformative(ACLMessage.INFORM);
+                ACLMessage msg = receive(MT1);
+                if (msg == null) {
+                    return;
+                }
+
+                Serializable contentObject = null;
+                try {
+                    contentObject = msg.getContentObject();
+                } catch (UnreadableException e) {
+                    e.printStackTrace();
+                }
+
+                if (contentObject == null) {
+                    System.out.println("Agent " + getLocalName() + " received NULL message: " + msg.getContent());
+                    return;
+                }
+
+                if (contentObject instanceof ReadyMessage) {
+                    System.out.println("Agent " + getLocalName() + " received READY MESSAGE");
+                    addBehaviourStartProcessing();
+
+
+                } else if (contentObject instanceof OpinionResponseMessage) {
+                    System.out.println("Agent " + getLocalName() + " received OPINION RESPONSE");
+                    OpinionResponseMessage opinionRequest = (OpinionResponseMessage) contentObject;
+                    analyzeOptionResponses(opinionRequest.getId(), opinionRequest.getOutputData()); // response
+
+                    
+                } else if (contentObject instanceof OpinionRequestMessage) {
+                    System.out.println("Agent " + getLocalName() + " received OPINION REQUEST");
+                    OpinionRequestMessage opinionRequest = (OpinionRequestMessage) contentObject;
+                    answerOpinionRequests(opinionRequest.getId(), opinionRequest.getInputData(), msg.getSender()); // request
+
+                } else {
+                    System.out.println("Agent " + getLocalName() + " received UNKNOWN MESSAGE: " + contentObject);
+                }
+            }
+        });
+    }
+
+    private void addBehaviourStartProcessing() {
+        addBehaviour(new OneShotBehaviour(this) {
+            @Override
+            public void action() {
+                // TODO: Split the data for each agent
+                try {
+                    List<float[]> data = LoadCsvFromDisk
+                            .stream(Constants.TEST_PATH)
+                            .limit(10)
+                            .collect(LoadCsvFromDisk.dataCollector);
+
+                    for (float[] floats : data) {
+                        analyzeData(floats);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                showStatistics();
+            }
+        });
+    }
+
+    private void addBehaviourTimeout(UUID id, float[] inputData) {
+        addBehaviour(new TickerBehaviour(this, OPINION_TIMEOUT) {
+            @Override
+            protected void onTick() {
+                synchronized (bestOpinions) {
+                    OpinionResult result = bestOpinions.remove(id);
+
+                    if (result != null) {
+                        bestOpinions.remove(id);
+                        analyzeResult(inputData, result.getBest());
+                    }
+
+                    stop(); // Only once
+                }
+            }
+        });
+    }
+
+    private void showSetupError(String message) {
+        showError(message + "\n" + USAGE);
+    }
+
+    private void showError(String message) {
+        System.out.println("ERROR: " + message);
+    }
+
+    private void showMessage(String message) {
+        System.out.println("Agent " + getLocalName() + ": " + message);
+    }
+
+    private void showStatistics() {
+        System.out.println("Agent " + getLocalName() + " statistics:");
+        System.out.println("  Analyzed data: " + countAnalyzeData);
+        System.out.println("  Analyzed result: " + countAnalyzeResult);
+        System.out.println("  Asked for opinion: " + countAskForOpinion);
+        System.out.println("  Answered opinion requests: " + countAnswerOpinionRequests);
+        System.out.println("  Analyzed opinion responses: " + countAnalyzeOptionResponses);
+    }
+}

@@ -1,0 +1,32 @@
+### Resumo Python
+Criei uma api flask a qual recebe uma requisição sobre um dado enviado - O java busca essa api através de uma conexão http e busca o resultado da api.
+
+### Resumo Java - AgenteAI - O agente AI - primeiramente lançamos o agente
+com sua skill pre definida.
+
+Classe 1 - (askForOpinion) - Varre sobre todo o DF e verifica se a skill do
+agente encontrado é diferente do agente requisitor, caso seja ele, cria
+Uma descrição de um agente e o serviço do agente passando para ele o tipo
+do serviço e a descrição do serviço.
+-Após isso ele tenta fazer uma busca sobre todos os agente que retornam sobre
+o critério de busca.
+
+Classe 2 (Analise Data) - Recebe o dado a ser analisado e envia pra api, se a resposta
+for ataque, ele chama a função analizeResults e passa o dado de entrada e a resposta 
+da análise. Caso não for ele chama a função askForOpinion, verifica os agentes diferentes
+da skill dele e manda o dado para ser analisado com o resultado, um id e o dado.
+
+Classe 3 (answerOpinionRequests) - Recebe o dado, seu id e o AID do outro agente, busca
+na api e printa o resultado. Cria uma mensagem do tipo inform, cria seu destinatário 
+e envia a mensagem.
+
+Classe 4 (analyzeOpinionResponses) - Recebe o id e o dado de entrada, busca no método
+opinion result o melhor resultado (bestOpinions.get(id)), se o resultado for maior q 
+0.5 ele verifica se o melhor é menor que o dado de entrada então ele armazena o setBest
+como dado atual.
+
+Classe 5 (analyzeResult) - Recebe o dado e a prob de ataque e printa na tela.
+
+---------------------
+
+Classe 
